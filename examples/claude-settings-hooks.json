@@ -1,0 +1,27 @@
+{
+  "$comment": "Merge the 'hooks' key into .claude/settings.json (project) or ~/.claude/settings.json (user). SessionStart injects the latest checkpoint into a fresh/resumed/compacted context — this is the main recovery mechanism. PreCompact saves an emergency snapshot parsed from the session transcript right before compaction (hooks cannot force the model to call an MCP tool, so the snapshot is reconstructed locally from the transcript).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-checkpoint-mcp show"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-checkpoint-mcp precompact-snapshot"
+          }
+        ]
+      }
+    ]
+  }
+}

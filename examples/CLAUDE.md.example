@@ -1,0 +1,27 @@
+# Checkpoint discipline (agent-checkpoint MCP)
+
+This project uses the `agent-checkpoint` MCP server so work survives session
+cuts (context limits, quota). Follow these rules:
+
+## On task start
+If the task could be a continuation of earlier work (or you are unsure), call
+`get_checkpoint` FIRST. If a checkpoint exists, resume from "what remains" —
+do NOT redo anything listed under "what was already done".
+
+## While working
+Call `save_checkpoint` after EVERY concrete sub-task, not only when a numbered
+step finishes. A sub-task is: a file created or edited, a test passing, a
+command run successfully, a bug diagnosed. If the session died right now,
+the checkpoint must be enough for another agent to continue without asking.
+
+When calling `save_checkpoint`:
+- `plan`: the full numbered plan, verbatim, every time.
+- `what_was_done`: cumulative and specific ("created src/auth.py with login()
+  and logout(); tests in tests/test_auth.py pass"), never vague ("made progress").
+- `what_remains`: the exact next action in the current step ("wire login()
+  into routes.py POST /login; then run pytest tests/test_auth.py").
+
+## On task completion
+Save a final checkpoint with `step_status="done"` and the current step equal
+to the total. Ask the user before calling `clear_checkpoints` with
+`confirm=true`.
