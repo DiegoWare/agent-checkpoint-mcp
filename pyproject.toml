@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-checkpoint-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local MCP server that saves work-in-progress checkpoints so any AI agent can resume a multi-step plan exactly where a previous session was cut off."
 readme = "README.md"
 license = "MIT"

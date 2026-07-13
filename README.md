@@ -34,19 +34,36 @@ curl -fsSL https://raw.githubusercontent.com/DiegoWare/agent-checkpoint-mcp/main
 irm https://raw.githubusercontent.com/DiegoWare/agent-checkpoint-mcp/main/install/install.ps1 | iex
 ```
 
-The installer:
+That single command does everything:
 
 1. Installs the package with `uv`, `pipx`, or `pip --user` (whichever you have).
 2. Detects installed agents — **Claude Code**, **Cursor**, **Codex** — and
    registers the server in each one's MCP config (non-destructively).
-3. Prints what it changed. Restart your agent and the `agent-checkpoint`
-   server is live.
+3. Installs the Claude Code **recovery hooks** (see below): every new,
+   resumed, or compacted session automatically receives the latest
+   checkpoint, and an emergency checkpoint is saved right before every
+   compaction.
+4. Prints what it changed. Restart your agent and everything is live.
 
-Re-running the installer upgrades and re-registers. Prefer manual control?
+Re-running the installer upgrades and re-registers.
+
+**Don't want a piece of it?** Everything is reversible with one command:
+
+```bash
+agent-checkpoint-mcp uninstall --hooks   # remove the Claude Code hooks only
+agent-checkpoint-mcp uninstall --mcp     # remove the MCP registrations only
+agent-checkpoint-mcp uninstall           # remove both
+```
+
+(Or skip hooks at install time: `AGENT_CHECKPOINT_NO_HOOKS=1 curl ... | bash`,
+and `agent-checkpoint-mcp setup --no-hooks` thereafter. `--dry-run` previews
+any of these without writing.)
+
+Prefer manual control end to end?
 
 ```bash
 pipx install agent-checkpoint-mcp   # or: uv tool install agent-checkpoint-mcp
-agent-checkpoint-mcp setup          # add --dry-run to preview config changes
+agent-checkpoint-mcp setup          # same as the installer's registration step
 ```
 
 Or register by hand — the server command is just `agent-checkpoint-mcp`:
@@ -93,22 +110,14 @@ Session B (Codex, next morning):
     ## What remains in the current step — continue HERE ...
 ```
 
-## Auto-checkpoint setup (recommended)
+## How recovery works
 
-The server only helps if agents actually call it. Two pieces make that automatic:
+Two mechanisms, both installed automatically by the one-command installer:
 
-### 1. Instructions file
+### Claude Code hooks (installed for you)
 
-Copy [`examples/CLAUDE.md.example`](examples/CLAUDE.md.example) into your
-project's `CLAUDE.md` (Claude Code) and/or
-[`examples/AGENTS.md.example`](examples/AGENTS.md.example) into `AGENTS.md`
-(Codex and others). The key rule: **save after every concrete sub-task**, and
-call `get_checkpoint` first when a task looks like a continuation.
-
-### 2. Claude Code hooks (safety net)
-
-Merge [`examples/claude-settings-hooks.json`](examples/claude-settings-hooks.json)
-into `.claude/settings.json` (project) or `~/.claude/settings.json` (user):
+The installer merges two hooks into `~/.claude/settings.json`
+(non-destructively — your existing hooks are untouched):
 
 - **`SessionStart`** (`startup|resume|compact`) runs `agent-checkpoint-mcp show`,
   which prints the latest checkpoint — Claude Code injects that output into
@@ -121,6 +130,25 @@ into `.claude/settings.json` (project) or `~/.claude/settings.json` (user):
   so this snapshot is reconstructed from the transcript — cruder than a
   proper `save_checkpoint`, but it means even a session that never saved
   manually leaves a trail.
+
+Remove them anytime with `agent-checkpoint-mcp uninstall --hooks`. To merge
+them by hand instead (e.g. per-project in `.claude/settings.json`), use
+[`examples/claude-settings-hooks.json`](examples/claude-settings-hooks.json).
+
+### Per-project instructions (one command per project)
+
+For the best checkpoints — saved deliberately after every sub-task, not just
+recovered from transcripts — run this once inside a project:
+
+```bash
+agent-checkpoint-mcp init
+```
+
+It appends a checkpoint-discipline section to the project's `CLAUDE.md` and
+`AGENTS.md` (creating them if needed, skipping if already present). The key
+rule it teaches: **save after every concrete sub-task**, and call
+`get_checkpoint` first when a task looks like a continuation. Prefer to copy
+by hand? See [`examples/`](examples/).
 
 ## Where data lives
 
@@ -141,9 +169,13 @@ agent-checkpoint-mcp                      # run the MCP server (stdio) — what 
 agent-checkpoint-mcp show [--project D]   # print the latest checkpoint (used by the SessionStart hook)
 agent-checkpoint-mcp list [--project D]   # checkpoint history
 agent-checkpoint-mcp clear [--yes]        # delete this project's checkpoints
-agent-checkpoint-mcp setup [--dry-run]    # (re)register with detected agents
+agent-checkpoint-mcp init [--project D]   # add checkpoint instructions to CLAUDE.md/AGENTS.md
+agent-checkpoint-mcp setup [--no-hooks]   # (re)register with detected agents + install hooks
+agent-checkpoint-mcp uninstall [--hooks|--mcp]  # remove what setup installed
 agent-checkpoint-mcp precompact-snapshot  # used by the PreCompact hook (hook JSON on stdin)
 ```
+
+`setup` and `uninstall` accept `--dry-run` to preview changes without writing.
 
 ## Development
 

@@ -6,7 +6,9 @@ Code hooks:
 
   show                 print the latest checkpoint (used by the SessionStart hook)
   precompact-snapshot  save an emergency checkpoint from hook JSON on stdin
-  setup                detect installed agents and write their MCP configs
+  setup                register with all detected agents (MCP + Claude Code hooks)
+  uninstall            remove the hooks and/or MCP registrations
+  init                 add checkpoint instructions to this project's CLAUDE.md/AGENTS.md
   clear                delete this project's checkpoints from the terminal
 """
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from . import __version__
 from .project import find_project_root
@@ -73,7 +76,38 @@ def _cmd_precompact_snapshot(_args: argparse.Namespace) -> int:
 def _cmd_setup(args: argparse.Namespace) -> int:
     from .setup_agents import run_setup
 
-    return run_setup(dry_run=args.dry_run)
+    return run_setup(dry_run=args.dry_run, include_hooks=not args.no_hooks)
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    from .setup_agents import run_uninstall
+
+    # --hooks / --mcp narrow the removal; default removes both.
+    both = not args.hooks and not args.mcp
+    return run_uninstall(
+        mcp=both or args.mcp, hooks=both or args.hooks, dry_run=args.dry_run
+    )
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    from .assets import CHECKPOINT_INSTRUCTIONS, INSTRUCTIONS_MARKER
+
+    root = Path(find_project_root(args.project))
+    wrote = []
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        path = root / name
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        if INSTRUCTIONS_MARKER in existing:
+            print(f"  = {path} already has the checkpoint section")
+            continue
+        sep = "\n" if not existing or existing.endswith("\n") else "\n\n"
+        content = existing + sep + CHECKPOINT_INSTRUCTIONS if existing else CHECKPOINT_INSTRUCTIONS
+        path.write_text(content, encoding="utf-8")
+        wrote.append(path)
+        print(f"  ✓ {'updated' if existing else 'created'} {path}")
+    if wrote:
+        print("\nAgents working in this project will now checkpoint after every sub-task.")
+    return 0
 
 
 def _cmd_clear(args: argparse.Namespace) -> int:
@@ -125,10 +159,32 @@ def main(argv: list[str] | None = None) -> int:
     p_snap.set_defaults(func=_cmd_precompact_snapshot)
 
     p_setup = sub.add_parser(
-        "setup", help="detect installed agents and register this MCP server in their configs"
+        "setup",
+        help="register with all detected agents: MCP configs + Claude Code hooks",
     )
     p_setup.add_argument("--dry-run", action="store_true", help="show changes without writing")
+    p_setup.add_argument(
+        "--no-hooks",
+        action="store_true",
+        help="register the MCP server only; skip the Claude Code recovery hooks",
+    )
     p_setup.set_defaults(func=_cmd_setup)
+
+    p_un = sub.add_parser(
+        "uninstall",
+        help="remove what setup installed (default: hooks + MCP registrations)",
+    )
+    p_un.add_argument("--hooks", action="store_true", help="remove only the Claude Code hooks")
+    p_un.add_argument("--mcp", action="store_true", help="remove only the MCP registrations")
+    p_un.add_argument("--dry-run", action="store_true", help="show changes without writing")
+    p_un.set_defaults(func=_cmd_uninstall)
+
+    p_init = sub.add_parser(
+        "init",
+        help="add checkpoint instructions to this project's CLAUDE.md and AGENTS.md",
+    )
+    p_init.add_argument("--project", default=None, help="project directory (default: cwd)")
+    p_init.set_defaults(func=_cmd_init)
 
     p_clear = sub.add_parser("clear", help="delete all checkpoints for a project")
     p_clear.add_argument("--project", default=None, help="project directory (default: cwd)")

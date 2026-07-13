@@ -3,8 +3,13 @@
 #   irm https://raw.githubusercontent.com/DiegoWare/agent-checkpoint-mcp/main/install/install.ps1 | iex
 #
 # Installs the package (uv > pipx > pip --user), then runs
-# `agent-checkpoint-mcp setup` to register the server with every detected
-# agent (Claude Code, Cursor, Codex). Idempotent.
+# `agent-checkpoint-mcp setup`, which registers the server with every
+# detected agent (Claude Code, Cursor, Codex) AND installs the Claude Code
+# recovery hooks. Idempotent.
+#
+# Opt-outs (after install, or set AGENT_CHECKPOINT_NO_HOOKS=1 up front):
+#   agent-checkpoint-mcp uninstall --hooks   # remove the Claude Code hooks
+#   agent-checkpoint-mcp uninstall --mcp     # remove the MCP registrations
 $ErrorActionPreference = "Stop"
 
 $Package = "agent-checkpoint-mcp"
@@ -51,7 +56,12 @@ if (-not (Get-Command agent-checkpoint-mcp -ErrorAction SilentlyContinue)) {
     throw "Installed, but 'agent-checkpoint-mcp' is not on PATH. Add your Python Scripts dir to PATH and run: agent-checkpoint-mcp setup"
 }
 
-Info "Registering with installed agents"
-agent-checkpoint-mcp setup
+if ($env:AGENT_CHECKPOINT_NO_HOOKS -eq "1") {
+    Info "Registering with installed agents (MCP only, hooks skipped)"
+    agent-checkpoint-mcp setup --no-hooks
+} else {
+    Info "Registering with installed agents (MCP + Claude Code hooks)"
+    agent-checkpoint-mcp setup
+}
 
-Info "Done. Restart your agent (Claude Code / Cursor / Codex) to load the MCP server."
+Info "Done. Restart your agent (Claude Code / Cursor / Codex) and everything is live."
