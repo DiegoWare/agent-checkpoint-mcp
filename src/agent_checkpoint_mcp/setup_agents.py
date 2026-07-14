@@ -61,10 +61,15 @@ def _write_json(path: Path, data: dict, dry_run: bool) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _merge_mcp_servers_json(path: Path, command: list[str], dry_run: bool) -> None:
+def _merge_mcp_servers_json(
+    path: Path,
+    command: list[str],
+    dry_run: bool,
+    server_name: str = SERVER_NAME,
+) -> None:
     config = _load_json(path)
     servers = config.setdefault("mcpServers", {})
-    servers[SERVER_NAME] = {"command": command[0], "args": command[1:]}
+    servers[server_name] = {"command": command[0], "args": command[1:]}
     _write_json(path, config, dry_run)
 
 
@@ -78,7 +83,9 @@ def claude_code_present() -> bool:
     )
 
 
-def setup_claude_code(command: list[str], dry_run: bool) -> str | None:
+def setup_claude_code(
+    command: list[str], dry_run: bool, server_name: str = SERVER_NAME
+) -> str | None:
     claude_cli = shutil.which("claude")
     config_path = Path.home() / ".claude.json"
     if not claude_code_present():
@@ -87,11 +94,11 @@ def setup_claude_code(command: list[str], dry_run: bool) -> str | None:
     if claude_cli and not dry_run:
         # The CLI owns ~/.claude.json; let it do the write when available.
         subprocess.run(
-            [claude_cli, "mcp", "remove", "--scope", "user", SERVER_NAME],
+            [claude_cli, "mcp", "remove", "--scope", "user", server_name],
             capture_output=True,
         )
         result = subprocess.run(
-            [claude_cli, "mcp", "add", "--scope", "user", SERVER_NAME, "--", *command],
+            [claude_cli, "mcp", "add", "--scope", "user", server_name, "--", *command],
             capture_output=True,
             text=True,
         )
@@ -99,42 +106,47 @@ def setup_claude_code(command: list[str], dry_run: bool) -> str | None:
             return "Claude Code: registered via `claude mcp add --scope user`"
         # fall through to direct config edit
 
-    _merge_mcp_servers_json(config_path, command, dry_run)
+    _merge_mcp_servers_json(config_path, command, dry_run, server_name)
     return f"Claude Code: updated {config_path}"
 
 
 # --- Cursor ------------------------------------------------------------------
 
-def setup_cursor(command: list[str], dry_run: bool) -> str | None:
+def setup_cursor(
+    command: list[str], dry_run: bool, server_name: str = SERVER_NAME
+) -> str | None:
     cursor_dir = Path.home() / ".cursor"
     if not cursor_dir.exists():
         return None
     path = cursor_dir / "mcp.json"
-    _merge_mcp_servers_json(path, command, dry_run)
+    _merge_mcp_servers_json(path, command, dry_run, server_name)
     return f"Cursor: updated {path}"
 
 
 # --- Codex -------------------------------------------------------------------
 
-# Our section: its header line plus every following line up to (not
-# including) the next section header at the start of a line, or EOF.
-_CODEX_SECTION_RE = re.compile(
-    r"^\[mcp_servers\.(?:\"agent-checkpoint\"|agent-checkpoint)\][ \t]*\n"
-    r"(?:(?!\[).*\n?)*",
-    re.MULTILINE,
-)
+def _codex_section_re(server_name: str) -> re.Pattern[str]:
+    """Match one named MCP section without consuming the following section."""
+    escaped = re.escape(server_name)
+    return re.compile(
+        rf'^\[mcp_servers\.(?:"{escaped}"|{escaped})\][ \t]*\n'
+        r"(?:(?!\[).*\n?)*",
+        re.MULTILINE,
+    )
 
 
-def _codex_section(command: list[str]) -> str:
+def _codex_section(command: list[str], server_name: str = SERVER_NAME) -> str:
     args = ", ".join(json.dumps(a) for a in command[1:])
     return (
-        f'[mcp_servers."{SERVER_NAME}"]\n'
+        f'[mcp_servers."{server_name}"]\n'
         f"command = {json.dumps(command[0])}\n"
         f"args = [{args}]\n"
     )
 
 
-def _merge_codex_text(text: str, command: list[str]) -> str:
+def _merge_codex_text(
+    text: str, command: list[str], server_name: str = SERVER_NAME
+) -> str:
     """Replace or append our section in Codex config TOML text.
 
     The stdlib can parse TOML but not write it. Instead of pulling in a
@@ -144,9 +156,10 @@ def _merge_codex_text(text: str, command: list[str]) -> str:
     import tomllib
 
     tomllib.loads(text)  # refuse to edit a broken file
-    section = _codex_section(command)
-    if _CODEX_SECTION_RE.search(text):
-        new_text = _CODEX_SECTION_RE.sub(lambda _: section + "\n", text).rstrip() + "\n"
+    section_re = _codex_section_re(server_name)
+    section = _codex_section(command, server_name)
+    if section_re.search(text):
+        new_text = section_re.sub(lambda _: section + "\n", text).rstrip() + "\n"
     else:
         sep = "\n" if not text or text.endswith("\n") else "\n\n"
         new_text = text + sep + section
@@ -154,7 +167,9 @@ def _merge_codex_text(text: str, command: list[str]) -> str:
     return new_text
 
 
-def setup_codex(command: list[str], dry_run: bool) -> str | None:
+def setup_codex(
+    command: list[str], dry_run: bool, server_name: str = SERVER_NAME
+) -> str | None:
     codex_dir = Path.home() / ".codex"
     if not codex_dir.exists():
         return None
@@ -164,7 +179,7 @@ def setup_codex(command: list[str], dry_run: bool) -> str | None:
     import tomllib
 
     try:
-        new_text = _merge_codex_text(text, command)
+        new_text = _merge_codex_text(text, command, server_name)
     except tomllib.TOMLDecodeError as e:
         raise RuntimeError(f"{path} is not valid TOML ({e}); fix it and re-run") from e
 
@@ -175,50 +190,64 @@ def setup_codex(command: list[str], dry_run: bool) -> str | None:
 
 # --- Removal -----------------------------------------------------------------
 
-def _remove_from_mcp_json(path: Path, dry_run: bool) -> bool:
+def _remove_from_mcp_json(
+    path: Path, dry_run: bool, server_name: str = SERVER_NAME
+) -> bool:
     if not path.exists():
         return False
     config = _load_json(path)
     servers = config.get("mcpServers", {})
-    if SERVER_NAME not in servers:
+    if server_name not in servers:
         return False
-    del servers[SERVER_NAME]
+    del servers[server_name]
     _write_json(path, config, dry_run)
     return True
 
 
-def remove_claude_code(dry_run: bool) -> str | None:
+def remove_claude_code(
+    dry_run: bool, server_name: str = SERVER_NAME
+) -> str | None:
     claude_cli = shutil.which("claude")
     if claude_cli and not dry_run:
         result = subprocess.run(
-            [claude_cli, "mcp", "remove", "--scope", "user", SERVER_NAME],
+            [claude_cli, "mcp", "remove", "--scope", "user", server_name],
             capture_output=True,
         )
         if result.returncode == 0:
             return "Claude Code: unregistered MCP server"
-    if _remove_from_mcp_json(Path.home() / ".claude.json", dry_run):
+    if _remove_from_mcp_json(Path.home() / ".claude.json", dry_run, server_name):
         return f"Claude Code: removed from {Path.home() / '.claude.json'}"
     return None
 
 
-def remove_cursor(dry_run: bool) -> str | None:
+def remove_cursor(dry_run: bool, server_name: str = SERVER_NAME) -> str | None:
     path = Path.home() / ".cursor" / "mcp.json"
-    if _remove_from_mcp_json(path, dry_run):
+    if _remove_from_mcp_json(path, dry_run, server_name):
         return f"Cursor: removed from {path}"
     return None
 
 
-def remove_codex(dry_run: bool) -> str | None:
+def _remove_codex_text(text: str, server_name: str = SERVER_NAME) -> str | None:
+    """Remove one named MCP section and validate the remaining TOML."""
+    import tomllib
+
+    section_re = _codex_section_re(server_name)
+    if not section_re.search(text):
+        return None
+    new_text = section_re.sub("", text).rstrip()
+    new_text = f"{new_text}\n" if new_text else ""
+    tomllib.loads(new_text)
+    return new_text
+
+
+def remove_codex(dry_run: bool, server_name: str = SERVER_NAME) -> str | None:
     path = Path.home() / ".codex" / "config.toml"
     if not path.exists():
         return None
     text = path.read_text(encoding="utf-8")
-    if not _CODEX_SECTION_RE.search(text):
+    new_text = _remove_codex_text(text, server_name)
+    if new_text is None:
         return None
-    import tomllib
-
-    new_text = _CODEX_SECTION_RE.sub("", text).rstrip() + "\n"
-    tomllib.loads(new_text)
     if not dry_run:
         path.write_text(new_text, encoding="utf-8")
     return f"Codex: removed from {path}"

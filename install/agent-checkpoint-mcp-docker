@@ -1,0 +1,70 @@
+#!/bin/sh
+# Host-side stdio launcher shared by Agent Checkpoint and Codebase Memory.
+set -eu
+
+IMAGE="${AGENT_CHECKPOINT_DOCKER_IMAGE:-agent-checkpoint-mcp:local}"
+CHECKPOINT_VOLUME="${AGENT_CHECKPOINT_DOCKER_CHECKPOINT_VOLUME:-agent-checkpoint-mcp-checkpoints}"
+CODEBASE_VOLUME="${AGENT_CHECKPOINT_DOCKER_CODEBASE_VOLUME:-agent-checkpoint-mcp-codebase}"
+
+fail() {
+  echo "agent-checkpoint-mcp-docker: $*" >&2
+  exit 1
+}
+
+command -v docker >/dev/null 2>&1 || fail "docker is not installed or not on PATH"
+
+target="${1:-}"
+[ -n "$target" ] || fail "expected target: checkpoint or codebase"
+shift
+
+cwd="$(pwd -P)"
+if command -v git >/dev/null 2>&1 && git -C "$cwd" rev-parse --show-toplevel >/dev/null 2>&1; then
+  project_root="$(git -C "$cwd" rev-parse --show-toplevel)"
+  project_root="$(cd "$project_root" && pwd -P)"
+else
+  project_root="$cwd"
+fi
+
+case "$project_root" in
+  *,*) fail "project paths containing commas are not supported by Docker --mount" ;;
+esac
+
+# Deliberately keep the two exec branches explicit. POSIX sh has no arrays,
+# and passing Docker flags through an expanded string would corrupt paths that
+# contain spaces.
+case "$target" in
+  checkpoint)
+    exec docker run \
+      --rm -i \
+      --network none \
+      --read-only \
+      --cap-drop ALL \
+      --security-opt no-new-privileges \
+      --pids-limit 256 \
+      --tmpfs /tmp:rw,nosuid,nodev,noexec,size=268435456 \
+      --mount "type=bind,source=${project_root},target=${project_root},readonly" \
+      --mount "type=volume,source=${CHECKPOINT_VOLUME},target=/data/checkpoint" \
+      --workdir "$cwd" \
+      --env AGENT_CHECKPOINT_HOME=/data/checkpoint \
+      "$IMAGE" checkpoint "$@"
+    ;;
+  codebase)
+    exec docker run \
+      --rm -i \
+      --network none \
+      --read-only \
+      --cap-drop ALL \
+      --security-opt no-new-privileges \
+      --pids-limit 256 \
+      --tmpfs /tmp:rw,nosuid,nodev,noexec,size=268435456 \
+      --mount "type=bind,source=${project_root},target=${project_root},readonly" \
+      --mount "type=volume,source=${CODEBASE_VOLUME},target=/data/codebase" \
+      --workdir "$cwd" \
+      --env CBM_CACHE_DIR=/data/codebase \
+      --env "CBM_ALLOWED_ROOT=${project_root}" \
+      "$IMAGE" codebase "$@"
+    ;;
+  *)
+    fail "unknown target '$target' (expected checkpoint or codebase)"
+    ;;
+esac

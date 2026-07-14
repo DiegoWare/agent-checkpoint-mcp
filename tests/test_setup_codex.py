@@ -1,6 +1,6 @@
 import tomllib
 
-from agent_checkpoint_mcp.setup_agents import _merge_codex_text
+from agent_checkpoint_mcp.setup_agents import _merge_codex_text, _remove_codex_text
 
 CMD = ["/opt/bin/agent-checkpoint-mcp"]
 
@@ -40,3 +40,21 @@ def test_replace_preserves_following_sections():
 def test_empty_config():
     parsed = tomllib.loads(_merge_codex_text("", CMD))
     assert parsed["mcp_servers"]["agent-checkpoint"]["args"] == []
+
+
+def test_multiple_named_servers_can_be_updated_and_removed_independently():
+    text = _merge_codex_text("", CMD)
+    text = _merge_codex_text(
+        text,
+        ["/opt/bin/docker-launcher", "codebase"],
+        "codebase-memory-mcp",
+    )
+    parsed = tomllib.loads(text)
+    assert set(parsed["mcp_servers"]) == {
+        "agent-checkpoint",
+        "codebase-memory-mcp",
+    }
+
+    removed = _remove_codex_text(text, "codebase-memory-mcp")
+    assert removed is not None
+    assert set(tomllib.loads(removed)["mcp_servers"]) == {"agent-checkpoint"}

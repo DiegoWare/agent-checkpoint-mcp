@@ -66,6 +66,54 @@ pipx install agent-checkpoint-mcp   # or: uv tool install agent-checkpoint-mcp
 agent-checkpoint-mcp setup          # same as the installer's registration step
 ```
 
+## Docker-isolated install (Agent Checkpoint + Codebase Memory)
+
+If you do not want either MCP installed into the host Python environment, this
+repository includes an optional Docker path for macOS and Linux. From a clone
+of this repository, run:
+
+```bash
+./install/docker.sh install
+```
+
+That one command builds a local `agent-checkpoint-mcp:local` image containing
+this project and the checksum-verified
+[`codebase-memory-mcp`](https://github.com/DeusData/codebase-memory-mcp)
+v0.8.1 binary, then registers both servers with detected Claude Code, Cursor,
+and Codex installations. The clients launch one short-lived stdio container
+per MCP connection; there are no background services or open ports.
+
+At runtime each container has no network, runs as a non-root user with dropped
+capabilities, and sees only the active Git repository at its original absolute
+path. The repository mount and container root are read-only. Checkpoints and
+code indexes persist in separate Docker volumes, so Codebase Memory cannot
+create `.codebase-memory/graph.db.zst` or otherwise edit source files.
+
+Manage either MCP independently:
+
+```bash
+./install/docker.sh disable codebase       # keep Agent Checkpoint
+./install/docker.sh enable codebase
+./install/docker.sh disable checkpoint     # also removes its Claude hooks
+./install/docker.sh enable checkpoint
+./install/docker.sh doctor                 # config + stdio handshake checks
+./install/docker.sh uninstall              # keep image and persistent data
+```
+
+Disabling or uninstalling never deletes data. Purging is separate and requires
+an explicit confirmation flag:
+
+```bash
+./install/docker.sh purge checkpoint --yes
+./install/docker.sh purge codebase --yes
+./install/docker.sh purge all --yes
+```
+
+The registrations point to the launcher inside this checkout, so keep the
+clone at the same path. Docker limits accidental host exposure, but anyone who
+controls the Docker daemon or the host root account can still access Docker
+volumes and mounts.
+
 Or register by hand — the server command is just `agent-checkpoint-mcp`:
 
 ```jsonc
@@ -159,6 +207,10 @@ One SQLite database, keyed by project path — nothing is written inside your re
 | macOS | `~/Library/Application Support/agent-checkpoint-mcp/checkpoints.db` |
 | Linux | `$XDG_DATA_HOME/agent-checkpoint-mcp/checkpoints.db` (default `~/.local/share/...`) |
 | Windows | `%LOCALAPPDATA%\agent-checkpoint-mcp\checkpoints.db` |
+
+The Docker variant stores checkpoints in the
+`agent-checkpoint-mcp-checkpoints` volume and Codebase Memory indexes in the
+`agent-checkpoint-mcp-codebase` volume.
 
 Override with the `AGENT_CHECKPOINT_HOME` environment variable.
 

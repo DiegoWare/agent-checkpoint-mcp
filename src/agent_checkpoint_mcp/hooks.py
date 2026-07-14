@@ -37,9 +37,9 @@ def _hook_config(command: str) -> dict[str, dict]:
     }
 
 
-def _is_ours(entry: dict) -> bool:
+def _is_ours(entry: dict, marker: str = HOOK_MARKER) -> bool:
     return any(
-        HOOK_MARKER in h.get("command", "")
+        marker in h.get("command", "")
         for h in entry.get("hooks", [])
         if isinstance(h, dict)
     )
@@ -78,7 +78,11 @@ def install_hooks(command: str, path: Path | None = None, dry_run: bool = False)
     return f"Claude Code hooks (SessionStart + PreCompact): updated {path}"
 
 
-def remove_hooks(path: Path | None = None, dry_run: bool = False) -> str | None:
+def remove_hooks(
+    path: Path | None = None,
+    dry_run: bool = False,
+    marker: str = HOOK_MARKER,
+) -> str | None:
     """Remove our hooks from Claude Code settings. Returns a summary or None."""
     path = path or settings_path()
     if not path.exists():
@@ -92,7 +96,11 @@ def remove_hooks(path: Path | None = None, dry_run: bool = False) -> str | None:
         entries = hooks[event]
         if not isinstance(entries, list):
             continue
-        kept = [e for e in entries if not (isinstance(e, dict) and _is_ours(e))]
+        kept = [
+            e
+            for e in entries
+            if not (isinstance(e, dict) and _is_ours(e, marker))
+        ]
         if len(kept) != len(entries):
             changed = True
             if kept:
